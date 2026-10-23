@@ -1,1 +1,9 @@
-[]
+[
+    {
+        "user_id": 1,
+        "username": "vadim",
+        "hashed_password": "bd905468190e10e7056694813bd3f5db84989e46d52f442ae5475e37a85258df",
+        "salt": "4982a527e243ad7af3bada32a6d32146",
+        "registration_date": "2026-10-21T15:30:25.775209+00:00"
+    }
+]

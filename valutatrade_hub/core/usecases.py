@@ -1,7 +1,14 @@
 from datetime import UTC, datetime
 
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.exceptions import ApiRequestError, CurrencyNotFoundError
 from valutatrade_hub.core.models import EXCHANGE_RATES, Portfolio, User
-from valutatrade_hub.core.utils import load_json, save_json
+from valutatrade_hub.decorators import log_action
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import SettingsLoader
+
+db = DatabaseManager()
+settings = SettingsLoader()
 
 
 def register(username, password):
@@ -11,7 +18,7 @@ def register(username, password):
     if not isinstance(password, str) or len(password) < 4:
         raise ValueError("Пароль должен быть не короче 4 символов")
 
-    users = load_json("data/users.json")
+    users = db.load(settings.get("users_path"))
 
     for user in users:
         if user["username"] == username:
@@ -32,17 +39,17 @@ def register(username, password):
         }
     )
 
-    save_json("data/users.json", users)
+    db.save(settings.get("users_path"), users)
 
-    portfolios = load_json("data/portfolios.json")
+    portfolios = db.load(settings.get("portfolios_path"))
     portfolios.append({"user_id": user_id, "wallets": {}})
-    save_json("data/portfolios.json", portfolios)
+    db.save(settings.get("portfolios_path"), portfolios)
 
     return new_user
 
 
 def login(username, password):
-    users = load_json("data/users.json")
+    users = db.load(settings.get("users_path"))
 
     for user_data in users:
         if user_data["username"] == username:
@@ -63,7 +70,7 @@ def login(username, password):
 
 
 def get_portfolio(user):
-    portfolios = load_json("data/portfolios.json")
+    portfolios = db.load(settings.get("portfolios_path"))
 
     for portfolio_data in portfolios:
         if portfolio_data["user_id"] == user.user_id:
@@ -82,7 +89,7 @@ def get_portfolio(user):
 
 
 def save_portfolio(portfolio):
-    portfolios = load_json("data/portfolios.json")
+    portfolios = db.load(settings.get("portfolios_path"))
 
     for portfolio_data in portfolios:
         if portfolio_data["user_id"] == portfolio.user_id:
@@ -90,14 +97,14 @@ def save_portfolio(portfolio):
                 code: {"balance": wallet.balance}
                 for code, wallet in portfolio.wallets.items()
             }
-            save_json("data/portfolios.json", portfolios)
+            db.save(settings.get("portfolios_path"), portfolios)
             return
 
     raise ValueError("Портфель пользователя не найден")
 
 
 def get_portfolio_by_id(user_id):
-    users = load_json("data/users.json")
+    users = db.load(settings.get("users_path"))
 
     for user_data in users:
         if user_data["user_id"] == user_id:
@@ -113,9 +120,9 @@ def get_portfolio_by_id(user_id):
     raise ValueError("Пользователь не найден")
 
 
+@log_action("BUY", verbose=True)
 def buy(user_id, currency_code, amount):
-    if currency_code not in EXCHANGE_RATES:
-        raise ValueError(f"Неизвестная валюта '{currency_code}'")
+    get_currency(currency_code)
 
     portfolio = get_portfolio_by_id(user_id)
     portfolio.add_currency(currency_code)
@@ -125,6 +132,8 @@ def buy(user_id, currency_code, amount):
         raise ValueError("Кошелёк не найден")
 
     old_balance = wallet.balance
+    rate = get_rate(currency_code, "USD")["rate"]
+
     wallet.deposit(amount)
 
     save_portfolio(portfolio)
@@ -134,14 +143,14 @@ def buy(user_id, currency_code, amount):
         "amount": amount,
         "old_balance": old_balance,
         "new_balance": wallet.balance,
-        "rate": EXCHANGE_RATES[currency_code],
-        "total": amount * EXCHANGE_RATES[currency_code],
+        "rate": rate,
+        "total": amount * rate,
     }
 
 
+@log_action("SELL", verbose=True)
 def sell(user_id, currency_code, amount):
-    if currency_code not in EXCHANGE_RATES:
-        raise ValueError(f"Неизвестная валюта '{currency_code}'")
+    get_currency(currency_code)
 
     portfolio = get_portfolio_by_id(user_id)
     wallet = portfolio.get_wallet(currency_code)
@@ -150,6 +159,8 @@ def sell(user_id, currency_code, amount):
         raise ValueError(f"У вас нет кошелька '{currency_code}'")
 
     old_balance = wallet.balance
+    rate = get_rate(currency_code, "USD")["rate"]
+
     wallet.withdraw(amount)
 
     save_portfolio(portfolio)
@@ -159,40 +170,88 @@ def sell(user_id, currency_code, amount):
         "amount": amount,
         "old_balance": old_balance,
         "new_balance": wallet.balance,
-        "rate": EXCHANGE_RATES[currency_code],
-        "total": amount * EXCHANGE_RATES[currency_code],
+        "rate": rate,
+        "total": amount * rate,
     }
 
 
 def get_rate(from_code, to_code):
-    if from_code not in EXCHANGE_RATES:
-        raise ValueError(f"Неизвестная валюта '{from_code}'")
+    get_currency(from_code)
+    get_currency(to_code)
 
-    if to_code not in EXCHANGE_RATES:
-        raise ValueError(f"Неизвестная валюта '{to_code}'")
+    rates = db.load(settings.get("rates_path"))
+    now = datetime.now(UTC)
+    ttl = settings.get("rates_ttl_seconds")
 
-    rate = EXCHANGE_RATES[from_code] / EXCHANGE_RATES[to_code]
+    last_refresh = rates.get("last_refresh")
+
+    expired = True
+
+    if last_refresh:
+        updated_at = datetime.fromisoformat(last_refresh)
+        elapsed = (now - updated_at).total_seconds()
+        expired = elapsed > ttl
+
+    if expired:
+        pairs = {}
+
+        for code, rate in EXCHANGE_RATES.items():
+            if code != "USD":
+                pairs[f"{code}_USD"] = {
+                    "rate": rate,
+                    "updated_at": now.isoformat(),
+                    "source": "Stub",
+                }
+
+        rates = {
+            "pairs": pairs,
+            "last_refresh": now.isoformat(),
+        }
+
+        db.save(settings.get("rates_path"), rates)
+
+    pairs = rates["pairs"]
+
+    if from_code != "USD" and f"{from_code}_USD" not in pairs:
+        raise ApiRequestError(f"Курс {from_code}->USD недоступен")
+
+    if to_code != "USD" and f"{to_code}_USD" not in pairs:
+        raise ApiRequestError(f"Курс {to_code}->USD недоступен")
+
+    from_rate = 1.0 if from_code == "USD" else pairs[f"{from_code}_USD"]["rate"]
+    to_rate = 1.0 if to_code == "USD" else pairs[f"{to_code}_USD"]["rate"]
+
+    rate = from_rate / to_rate
 
     return {
         "from": from_code,
         "to": to_code,
         "rate": rate,
         "reverse_rate": 1 / rate,
-        "updated_at": datetime.now(UTC).isoformat(),
+        "updated_at": rates["last_refresh"],
     }
 
 
 def show_portfolio(user_id, base_currency="USD"):
-    if base_currency not in EXCHANGE_RATES:
-        raise ValueError(f"Неизвестная базовая валюта '{base_currency}'")
+    try:
+        get_currency(base_currency)
+    except CurrencyNotFoundError:
+        raise ValueError(f"Неизвестная базовая валюта '{base_currency}'") from None
 
     portfolio = get_portfolio_by_id(user_id)
-    total = portfolio.get_total_value(base_currency)
 
     wallets = []
+    rates = {"USD": 1.0}
+
+    for code in portfolio.wallets:
+        rates[code] = get_rate(code, "USD")["rate"]
+
+    rates[base_currency] = get_rate(base_currency, "USD")["rate"]
+
+    total = portfolio.get_total_value(base_currency, rates)
 
     for code, wallet in portfolio.wallets.items():
-        value = wallet.balance * EXCHANGE_RATES[code] / EXCHANGE_RATES[base_currency]
+        value = wallet.balance * rates[code] / rates[base_currency]
 
         wallets.append(
             {

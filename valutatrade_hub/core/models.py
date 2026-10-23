@@ -3,6 +3,8 @@ import math
 import secrets
 from datetime import datetime
 
+from valutatrade_hub.core.exceptions import InsufficientFundsError
+
 
 class User:
     """Пользователь"""
@@ -111,10 +113,7 @@ class Wallet:
             raise ValueError("Сумма должна быть положительным числом")
 
         if amount > self.balance:
-            raise ValueError(
-                f"Недостаточно средств: доступно {self.balance} {self.currency_code}, "
-                f"требуется {amount} {self.currency_code}"
-            )
+            raise InsufficientFundsError(self.balance, amount, self.currency_code)
 
         self.balance -= amount
 
