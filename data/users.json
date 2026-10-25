@@ -1,9 +1,9 @@
 [
     {
         "user_id": 1,
-        "username": "vadim",
-        "hashed_password": "bd905468190e10e7056694813bd3f5db84989e46d52f442ae5475e37a85258df",
-        "salt": "4982a527e243ad7af3bada32a6d32146",
-        "registration_date": "2026-10-21T15:30:25.775209+00:00"
+        "username": "Vadim",
+        "hashed_password": "3fe1b7b89523d8201ef8b401ba4377bdbc6c0d272e24f312b1dcbe431cc5818e",
+        "salt": "20cec2e800dddcc7c519e5b41193d312",
+        "registration_date": "2026-10-25T20:02:22.358259+00:00"
     }
 ]
