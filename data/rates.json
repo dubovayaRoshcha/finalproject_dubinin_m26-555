@@ -1,25 +1,25 @@
 {
     "pairs": {
         "EUR_USD": {
-            "rate": 1.08,
-            "updated_at": "2026-10-21T16:55:13.301143+00:00",
-            "source": "Stub"
+            "rate": 1.1200716845878136,
+            "updated_at": "2026-10-24T16:01:33.009339+00:00",
+            "source": "exchangerate"
         },
         "BTC_USD": {
-            "rate": 59337.21,
-            "updated_at": "2026-10-21T16:55:13.301143+00:00",
-            "source": "Stub"
+            "rate": 79736,
+            "updated_at": "2026-10-24T16:01:32.441997+00:00",
+            "source": "coingecko"
         },
         "ETH_USD": {
-            "rate": 3720.0,
-            "updated_at": "2026-10-21T16:55:13.301143+00:00",
-            "source": "Stub"
+            "rate": 2304.39,
+            "updated_at": "2026-10-24T16:01:32.441997+00:00",
+            "source": "coingecko"
         },
         "RUB_USD": {
-            "rate": 0.01,
-            "updated_at": "2026-10-21T16:55:13.301143+00:00",
-            "source": "Stub"
+            "rate": 0.012300622288481574,
+            "updated_at": "2026-10-24T16:01:33.009339+00:00",
+            "source": "exchangerate"
         }
     },
-    "last_refresh": "2026-10-21T16:55:13.301143+00:00"
+    "last_refresh": "2026-10-24T16:01:33.011260+00:00"
 }

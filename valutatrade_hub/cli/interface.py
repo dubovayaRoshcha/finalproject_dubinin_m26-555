@@ -14,7 +14,14 @@ from valutatrade_hub.core.usecases import (
     register,
     sell,
     show_portfolio,
+    show_rates,
 )
+from valutatrade_hub.parser_service.api_clients import (
+    CoinGeckoClient,
+    ExchangeRateApiClient,
+)
+from valutatrade_hub.parser_service.storage import RatesStorage
+from valutatrade_hub.parser_service.updater import RatesUpdater
 
 
 def parse_args(args):
@@ -54,6 +61,8 @@ def main():
                 print("buy --currency BTC --amount 0.05")
                 print("sell --currency BTC --amount 0.01")
                 print("get-rate --from USD --to BTC")
+                print("update-rates [--source coingecko|exchangerate]")
+                print("show-rates [--currency BTC] [--top 2] [--base EUR]")
                 print("exit")
                 continue
 
@@ -142,6 +151,39 @@ def main():
                     print(table)
                     print(f"ИТОГО: {result['total']:.2f} {result['base']}")
 
+            elif command == "show-rates":
+                currency = args.get("currency")
+                base = args.get("base", "USD")
+                top = int(args["top"]) if "top" in args else None
+
+                result = show_rates(currency, top, base)
+
+                table = PrettyTable()
+                table.field_names = ["Валюта", "Курс", "Обновлено"]
+
+                for item in result:
+                    table.add_row(
+                        [
+                            f"{item['currency']}_{base}",
+                            f"{item['rate']:.8f}",
+                            item["updated_at"],
+                        ]
+                    )
+
+                print(table)
+
+            elif command == "update-rates":
+                source = args.get("source")
+                result = update_rates(source)
+
+                print(f"Обновлено курсов: {result['updated_count']}")
+                print(f"Время обновления: {result['last_refresh']}")
+
+                if result["errors"]:
+                    print("Некоторые источники недоступны:")
+                    for error in result["errors"]:
+                        print(error)
+
             else:
                 print("Неизвестная команда. Введите help.")
 
@@ -159,3 +201,19 @@ def main():
 
         except EOFError:
             break
+
+
+def update_rates(source=None):
+    clients = {
+        "coingecko": CoinGeckoClient(),
+        "exchangerate": ExchangeRateApiClient(),
+    }
+
+    if source is not None:
+        if source not in clients:
+            raise ValueError("Неизвестный источник курсов")
+
+        clients = {source: clients[source]}
+
+    updater = RatesUpdater(clients, RatesStorage())
+    return updater.run_update()

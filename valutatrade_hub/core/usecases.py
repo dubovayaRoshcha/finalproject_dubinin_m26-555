@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 from valutatrade_hub.core.currencies import get_currency
 from valutatrade_hub.core.exceptions import ApiRequestError, CurrencyNotFoundError
-from valutatrade_hub.core.models import EXCHANGE_RATES, Portfolio, User
+from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.decorators import log_action
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import SettingsLoader
@@ -180,35 +180,14 @@ def get_rate(from_code, to_code):
     get_currency(to_code)
 
     rates = db.load(settings.get("rates_path"))
-    now = datetime.now(UTC)
-    ttl = settings.get("rates_ttl_seconds")
+
+    if not rates or not rates.get("pairs"):
+        raise ApiRequestError("Кеш курсов пуст. Выполните update-rates")
 
     last_refresh = rates.get("last_refresh")
 
-    expired = True
-
-    if last_refresh:
-        updated_at = datetime.fromisoformat(last_refresh)
-        elapsed = (now - updated_at).total_seconds()
-        expired = elapsed > ttl
-
-    if expired:
-        pairs = {}
-
-        for code, rate in EXCHANGE_RATES.items():
-            if code != "USD":
-                pairs[f"{code}_USD"] = {
-                    "rate": rate,
-                    "updated_at": now.isoformat(),
-                    "source": "Stub",
-                }
-
-        rates = {
-            "pairs": pairs,
-            "last_refresh": now.isoformat(),
-        }
-
-        db.save(settings.get("rates_path"), rates)
+    if not last_refresh:
+        raise ApiRequestError("Нет времени обновления курсов")
 
     pairs = rates["pairs"]
 
@@ -217,6 +196,20 @@ def get_rate(from_code, to_code):
 
     if to_code != "USD" and f"{to_code}_USD" not in pairs:
         raise ApiRequestError(f"Курс {to_code}->USD недоступен")
+
+    now = datetime.now(UTC)
+    ttl = settings.get("rates_ttl_seconds")
+
+    for code in (from_code, to_code):
+        if code == "USD":
+            continue
+
+        pair = pairs[f"{code}_USD"]
+        updated_at = datetime.fromisoformat(pair["updated_at"])
+        elapsed = (now - updated_at).total_seconds()
+
+        if elapsed > ttl:
+            raise ApiRequestError(f"Курс {code} устарел. Выполните update-rates")
 
     from_rate = 1.0 if from_code == "USD" else pairs[f"{from_code}_USD"]["rate"]
     to_rate = 1.0 if to_code == "USD" else pairs[f"{to_code}_USD"]["rate"]
@@ -228,7 +221,7 @@ def get_rate(from_code, to_code):
         "to": to_code,
         "rate": rate,
         "reverse_rate": 1 / rate,
-        "updated_at": rates["last_refresh"],
+        "updated_at": last_refresh,
     }
 
 
@@ -266,3 +259,56 @@ def show_portfolio(user_id, base_currency="USD"):
         "wallets": wallets,
         "total": total,
     }
+
+
+def show_rates(currency=None, top=None, base="USD"):
+    get_currency(base)
+
+    if currency:
+        get_currency(currency)
+
+    data = db.load(settings.get("rates_path"))
+    pairs = data.get("pairs", {})
+
+    if not pairs:
+        raise ValueError("Кеш курсов пуст. Выполните update-rates")
+
+    rates = {"USD": 1.0}
+
+    for pair, info in pairs.items():
+        code = pair.split("_")[0]
+        rates[code] = info["rate"]
+
+    if base not in rates:
+        raise ValueError(f"Курс для '{base}' не найден в кеше")
+
+    result = []
+
+    for pair, info in pairs.items():
+        code = pair.split("_")[0]
+
+        if currency and code != currency:
+            continue
+
+        if top is not None and code not in ("BTC", "ETH"):
+            continue
+
+        result.append(
+            {
+                "currency": code,
+                "rate": rates[code] / rates[base],
+                "updated_at": info["updated_at"],
+            }
+        )
+
+    if currency and not result:
+        raise ValueError(f"Курс для '{currency}' не найден в кеше")
+
+    result.sort(key=lambda item: item["rate"], reverse=True)
+
+    if top is not None:
+        if top <= 0:
+            raise ValueError("Значение --top должно быть положительным")
+        result = result[:top]
+
+    return result
